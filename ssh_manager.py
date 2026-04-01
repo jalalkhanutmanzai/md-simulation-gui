@@ -38,7 +38,10 @@ class SSHManager:
         try:
             client = paramiko.SSHClient()
             client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            
+            # YAHAN POLICY CHANGE KI GAYI HAI: RejectPolicy() se AutoAddPolicy()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
             connect_kwargs = {
                 "hostname": self.config.host,
                 "port": self.config.port,
