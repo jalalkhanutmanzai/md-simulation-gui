@@ -44,6 +44,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
 
         self.state = AppState()
         self.plot_canvas = None
+        self.dnd_enabled = self._init_dnd()
 
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(fill="both", expand=True, padx=14, pady=14)
@@ -60,6 +61,14 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         self._build_execution_tab()
         self._build_results_tab()
         self._load_credentials()
+
+    def _init_dnd(self) -> bool:
+        try:
+            self.TkdndVersion = TkinterDnD._require(self)
+            return True
+        except Exception:
+            self.TkdndVersion = None
+            return False
 
     def _build_connection_tab(self):
         frame = ctk.CTkFrame(self.tab_connection)
@@ -111,8 +120,9 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         )
         self.drop_zone.pack(fill="x", pady=(0, 12))
         self.drop_zone.bind("<Button-1>", lambda _e: self._browse_upload_files())
-        self.drop_zone.drop_target_register(DND_FILES)
-        self.drop_zone.dnd_bind("<<Drop>>", self._handle_drop)
+        if self.dnd_enabled:
+            self.drop_zone.drop_target_register(DND_FILES)
+            self.drop_zone.dnd_bind("<<Drop>>", self._handle_drop)
 
         self.upload_list = ctk.CTkTextbox(wrapper, height=360)
         self.upload_list.pack(fill="both", expand=True)
