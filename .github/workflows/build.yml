@@ -34,7 +34,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: md-simulation-gui-${{ matrix.os }}
-          path: |
-            dist/md-simulation-gui.exe
-            dist/md-simulation-gui.app
+          path: dist/*
           if-no-files-found: warn

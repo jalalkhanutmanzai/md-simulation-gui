@@ -16,6 +16,8 @@ from data_viz import render_xvg_plot
 from ssh_manager import SSHConfig, SSHManager, SSHManagerError
 
 SERVICE_NAME = "md_simulation_gui"
+PROGRESS_START = 0.1
+PROGRESS_UPLOAD_RANGE = 0.4
 
 
 @dataclass
@@ -136,7 +138,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         self.defaults_menu.grid(row=1, column=1, sticky="w", padx=8, pady=8)
 
         ctk.CTkLabel(frame, text="Simulation Length (ns)").grid(row=2, column=0, sticky="w", padx=8, pady=8)
-        self.length_slider = ctk.CTkSlider(frame, from_=1, to=500, number_of_steps=499, command=self._on_slider_change)
+        self.length_slider = ctk.CTkSlider(frame, from_=1, to=500, command=self._on_slider_change)
         self.length_slider.set(100)
         self.length_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=8)
         self.length_label = ctk.CTkLabel(frame, text="100 ns")
@@ -325,7 +327,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
 
     def on_run_simulation(self):
         self.run_btn.configure(state="disabled")
-        self.progress.set(0.1)
+        self.progress.set(PROGRESS_START)
         self._append_terminal("\n=== Starting simulation ===\n")
         worker = threading.Thread(target=self._run_simulation_worker, daemon=True)
         worker.start()
@@ -341,7 +343,9 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
                 self.after(0, lambda: self._append_terminal("Uploading input files...\n"))
                 for idx, file_path in enumerate(self.state.uploaded_files, start=1):
                     manager.upload_file(file_path)
-                    progress_val = 0.1 + (0.4 * idx / max(len(self.state.uploaded_files), 1))
+                    progress_val = PROGRESS_START + (
+                        PROGRESS_UPLOAD_RANGE * idx / len(self.state.uploaded_files)
+                    )
                     self.after(0, lambda v=progress_val: self.progress.set(v))
 
             command = self._build_remote_command()

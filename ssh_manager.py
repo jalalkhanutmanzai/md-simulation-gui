@@ -9,6 +9,8 @@ import time
 
 import paramiko
 
+CONNECTION_TIMEOUT_SECONDS = 12
+
 
 class SSHManagerError(Exception):
     """Raised when SSH operations fail with user-friendly context."""
@@ -39,7 +41,7 @@ class SSHManager:
                 "hostname": self.config.host,
                 "port": self.config.port,
                 "username": self.config.username,
-                "timeout": 12,
+                "timeout": CONNECTION_TIMEOUT_SECONDS,
             }
             if self.config.key_path:
                 connect_kwargs["key_filename"] = self.config.key_path
@@ -50,7 +52,7 @@ class SSHManager:
             self.client = client
         except Exception as exc:
             raise SSHManagerError(
-                "Connection Timed Out or failed. Please check host, port, username, and credentials."
+                "Connection failed. Please check host, port, username, and credentials."
             ) from exc
 
     def disconnect(self) -> None:
