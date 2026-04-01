@@ -134,16 +134,24 @@ class SSHManager:
         downloaded: list[str] = []
         target_remote_dir = remote_dir or self.config.remote_workdir
 
-        def _download_dir(sftp, current_remote_dir: str) -> None:
+        def _download_dir(sftp, current_remote_dir: str, relative_dir: Path = Path()) -> None:
             for entry in sftp.listdir_attr(current_remote_dir):
                 remote_path = f"{current_remote_dir}/{entry.filename}"
-                is_dir = stat.S_ISDIR(entry.st_mode)
+                try:
+                    mode = entry.st_mode
+                except AttributeError as exc:
+                    raise SSHManagerError(
+                        f"Remote file metadata unavailable for '{entry.filename}'."
+                    ) from exc
+                is_dir = stat.S_ISDIR(mode)
                 if is_dir:
                     if recursive:
-                        _download_dir(sftp, remote_path)
+                        _download_dir(sftp, remote_path, relative_dir / entry.filename)
                     continue
                 if any(entry.filename.endswith(ext) for ext in extensions):
-                    local_path = str(Path(local_dir) / entry.filename)
+                    local_file = relative_dir / entry.filename if recursive else Path(entry.filename)
+                    local_path = str(Path(local_dir) / local_file)
+                    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
                     sftp.get(remote_path, local_path)
                     downloaded.append(local_path)
 

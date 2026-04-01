@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import shlex
 import threading
 import traceback
@@ -22,6 +23,9 @@ PROGRESS_UPLOAD_RANGE = 0.4
 DEFAULT_PROTOCOL_REPO = "https://github.com/jalalkhanutmanzai/gromacs-md-protocol.git"
 DEFAULT_PROTOCOL_BRANCH = "master"
 DEFAULT_PROTOCOL_COMMAND = "bash scripts/run_complete_workflow.sh"
+SAFE_COMMAND_TOKEN = re.compile(r"^[A-Za-z0-9_./:@+=,-]+$")
+SAFE_BASH_SCRIPT = re.compile(r"^[A-Za-z0-9_./-]+\.sh$")
+SAFE_MAKE_TARGET = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass
@@ -341,9 +345,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
             repo_url = self.protocol_repo_entry.get().strip() or DEFAULT_PROTOCOL_REPO
             branch = self.protocol_branch_entry.get().strip() or DEFAULT_PROTOCOL_BRANCH
             run_command = self.protocol_command_entry.get().strip() or DEFAULT_PROTOCOL_COMMAND
-            disallowed_tokens = [";", "&", "|", "`", "$", "<", ">", "\n", "\r"]
-            if any(token in run_command for token in disallowed_tokens):
-                raise ValueError("Protocol Run Command contains unsupported shell characters.")
+            safe_run_command = self._sanitize_protocol_command(run_command)
             remote_workdir = self.remote_dir_entry.get().strip() or "~/md_jobs"
             placement_commands = self._build_protocol_input_placement_commands(remote_workdir)
             return (
@@ -352,14 +354,15 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
                 f"cd {shlex.quote(remote_workdir)} ; "
                 f"if [ -d gromacs-md-protocol/.git ]; then "
                 f"cd gromacs-md-protocol && git fetch origin && git checkout {shlex.quote(branch)} "
-                f"&& git pull --ff-only origin {shlex.quote(branch)} && cd .. ; "
+                f"&& git reset --hard origin/{shlex.quote(branch)} && cd .. ; "
                 f"else git clone --branch {shlex.quote(branch)} --single-branch {shlex.quote(repo_url)} gromacs-md-protocol ; fi ; "
                 "cd gromacs-md-protocol ; "
                 "mkdir -p input/charmm_ligand ; "
                 "if [ ! -f config/config.env ] && [ -f config/config.env.example ]; then cp config/config.env.example config/config.env ; fi ; "
                 f"{placement_commands}"
                 f"echo 'Simulation length hint from GUI: {length_ns} ns' ; "
-                f"{run_command}"
+                f"export MD_SIM_LENGTH_NS={length_ns} ; "
+                f"{safe_run_command}"
             )
         params = self.params_text.get("1.0", "end").strip().replace("\n", " ; ")
         return (
@@ -389,13 +392,50 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
                 f"cp -f {shlex.quote(str(remote_root / 'lig_ini.pdb'))} input/charmm_ligand/lig_ini.pdb ; "
             )
         for suffix, target_name in ((".itp", "lig.itp"), (".prm", "lig.prm")):
-            source_name = next((name for name in uploaded_names if name.lower().endswith(suffix)), None)
-            if source_name:
+            matched = [name for name in uploaded_names if name.lower().endswith(suffix)]
+            if len(matched) > 1:
+                raise ValueError(
+                    f"Please upload only one {suffix} file for protocol auto-placement. Found: {', '.join(matched)}."
+                )
+            if matched:
+                source_name = matched[0]
                 commands.append(
                     f"cp -f {shlex.quote(str(remote_root / source_name))} input/charmm_ligand/{target_name} ; "
                 )
 
         return "".join(commands)
+
+    def _sanitize_protocol_command(self, command: str) -> str:
+        try:
+            parts = shlex.split(command)
+        except ValueError as exc:
+            raise ValueError("Protocol Run Command is invalid.") from exc
+        if not parts:
+            raise ValueError("Protocol Run Command cannot be empty.")
+        if not all(SAFE_COMMAND_TOKEN.fullmatch(part) for part in parts):
+            raise ValueError("Protocol Run Command contains unsupported characters.")
+        cmd = parts[0]
+        if cmd in {"bash", "sh"}:
+            if len(parts) != 2:
+                raise ValueError("Protocol Run Command with bash/sh must include only one script path.")
+            script = parts[1]
+            if ".." in script or not SAFE_BASH_SCRIPT.fullmatch(script):
+                raise ValueError("Protocol script path is invalid.")
+        elif cmd == "make":
+            if len(parts) != 2 or not SAFE_MAKE_TARGET.fullmatch(parts[1]):
+                raise ValueError("Protocol make target is invalid.")
+        else:
+            raise ValueError("Protocol Run Command must start with bash, sh, or make.")
+        return " ".join(shlex.quote(part) for part in parts)
+
+    def _deduplicate_paths(self, files: list[str]) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for file in files:
+            if file not in seen:
+                seen.add(file)
+                ordered.append(file)
+        return ordered
 
     def on_run_simulation(self):
         self.run_btn.configure(state="disabled")
@@ -479,7 +519,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
                         recursive=True,
                     )
                 )
-                files = list(dict.fromkeys(files))
+                files = self._deduplicate_paths(files)
             self.app_state.downloaded_files = files
             self.results_list.configure(state="normal")
             self.results_list.delete("1.0", "end")
