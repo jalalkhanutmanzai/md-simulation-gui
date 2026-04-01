@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import stat
 from typing import Callable, Iterable
 import time
 
@@ -122,18 +123,42 @@ class SSHManager:
         except Exception as exc:
             raise SSHManagerError("Failed while streaming remote command output.") from exc
 
-    def download_matching_files(self, local_dir: str, extensions: Iterable[str]) -> list[str]:
+    def download_matching_files(
+        self,
+        local_dir: str,
+        extensions: Iterable[str],
+        remote_dir: str | None = None,
+        recursive: bool = False,
+    ) -> list[str]:
         client = self._require_client()
         downloaded: list[str] = []
+        target_remote_dir = remote_dir or self.config.remote_workdir
+
+        def _download_dir(sftp, current_remote_dir: str, relative_dir: Path = Path()) -> None:
+            for entry in sftp.listdir_attr(current_remote_dir):
+                remote_path = f"{current_remote_dir}/{entry.filename}"
+                try:
+                    mode = entry.st_mode
+                except AttributeError as exc:
+                    raise SSHManagerError(
+                        f"Remote file metadata unavailable for '{entry.filename}'."
+                    ) from exc
+                is_dir = stat.S_ISDIR(mode)
+                if is_dir:
+                    if recursive:
+                        _download_dir(sftp, remote_path, relative_dir / entry.filename)
+                    continue
+                if any(entry.filename.endswith(ext) for ext in extensions):
+                    local_file = relative_dir / entry.filename if recursive else Path(entry.filename)
+                    local_path = str(Path(local_dir) / local_file)
+                    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+                    sftp.get(remote_path, local_path)
+                    downloaded.append(local_path)
+
         try:
             Path(local_dir).mkdir(parents=True, exist_ok=True)
             with client.open_sftp() as sftp:
-                for entry in sftp.listdir_attr(self.config.remote_workdir):
-                    if any(entry.filename.endswith(ext) for ext in extensions):
-                        remote_path = f"{self.config.remote_workdir}/{entry.filename}"
-                        local_path = str(Path(local_dir) / entry.filename)
-                        sftp.get(remote_path, local_path)
-                        downloaded.append(local_path)
+                _download_dir(sftp, target_remote_dir)
         except Exception as exc:
             raise SSHManagerError("Failed to download result files from remote server.") from exc
         return downloaded
