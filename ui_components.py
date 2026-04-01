@@ -42,7 +42,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.state = AppState()
+        self.app_state = AppState()
         self.plot_canvas = None
         self.dnd_enabled = self._init_dnd()
 
@@ -237,7 +237,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         try:
             manager = SSHManager(self._build_ssh_config())
             manager.test_connection()
-            self.state.ssh_manager = manager
+            self.app_state.ssh_manager = manager
             self.test_btn.configure(fg_color="green", hover_color="#1e8e3e")
             messagebox.showinfo("Connection", "Connection successful.")
         except (ValueError, SSHManagerError) as exc:
@@ -289,17 +289,17 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         allowed = {".pdb", ".top", ".gro"}
         for path in paths:
             suffix = Path(path).suffix.lower()
-            if suffix in allowed and path not in self.state.uploaded_files:
-                self.state.uploaded_files.append(path)
+            if suffix in allowed and path not in self.app_state.uploaded_files:
+                self.app_state.uploaded_files.append(path)
         self._refresh_upload_list()
 
     def _refresh_upload_list(self):
         self.upload_list.configure(state="normal")
         self.upload_list.delete("1.0", "end")
-        if not self.state.uploaded_files:
+        if not self.app_state.uploaded_files:
             self.upload_list.insert("1.0", "No files added yet.")
         else:
-            self.upload_list.insert("1.0", "\n".join(self.state.uploaded_files))
+            self.upload_list.insert("1.0", "\n".join(self.app_state.uploaded_files))
         self.upload_list.configure(state="disabled")
 
     def _append_terminal(self, text: str):
@@ -349,14 +349,14 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
             config = self._build_ssh_config()
             manager = SSHManager(config)
             manager.connect()
-            self.state.ssh_manager = manager
+            self.app_state.ssh_manager = manager
 
-            if self.state.uploaded_files:
+            if self.app_state.uploaded_files:
                 self.after(0, lambda: self._append_terminal("Uploading input files...\n"))
-                for idx, file_path in enumerate(self.state.uploaded_files, start=1):
+                for idx, file_path in enumerate(self.app_state.uploaded_files, start=1):
                     manager.upload_file(file_path)
                     progress_val = PROGRESS_START + (
-                        PROGRESS_UPLOAD_RANGE * idx / len(self.state.uploaded_files)
+                        PROGRESS_UPLOAD_RANGE * idx / len(self.app_state.uploaded_files)
                     )
                     self.after(0, lambda v=progress_val: self.progress.set(v))
 
@@ -385,12 +385,12 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
                 ),
             )
         finally:
-            if self.state.ssh_manager:
-                self.state.ssh_manager.disconnect()
+            if self.app_state.ssh_manager:
+                self.app_state.ssh_manager.disconnect()
             self.after(0, lambda: self.run_btn.configure(state="normal"))
 
     def on_download_results(self):
-        manager = self.state.ssh_manager
+        manager = self.app_state.ssh_manager
         if manager is None:
             try:
                 manager = SSHManager(self._build_ssh_config())
@@ -402,7 +402,7 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         output_dir = str(Path.home() / "md_simulation_results")
         try:
             files = manager.download_matching_files(output_dir, extensions=[".xvg", ".log", ".xtc"])
-            self.state.downloaded_files = files
+            self.app_state.downloaded_files = files
             self.results_list.configure(state="normal")
             self.results_list.delete("1.0", "end")
             self.results_list.configure(state="disabled")
@@ -414,11 +414,11 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         except SSHManagerError as exc:
             messagebox.showerror("Download Error", str(exc))
         finally:
-            if self.state.ssh_manager is None and manager is not None:
+            if self.app_state.ssh_manager is None and manager is not None:
                 manager.disconnect()
 
     def on_plot_xvg(self):
-        files = [f for f in self.state.downloaded_files if f.endswith(".xvg")]
+        files = [f for f in self.app_state.downloaded_files if f.endswith(".xvg")]
         if not files:
             messagebox.showwarning("Plot", "No .xvg files available. Download results first.")
             return
