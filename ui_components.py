@@ -64,10 +64,10 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
 
     def _init_dnd(self) -> bool:
         try:
-            self.TkdndVersion = TkinterDnD._require(self)
+            self.tkdnd_version = TkinterDnD._require(self)
             return True
-        except Exception:
-            self.TkdndVersion = None
+        except (RuntimeError, AttributeError):
+            self.tkdnd_version = None
             return False
 
     def _build_connection_tab(self):
@@ -118,6 +118,8 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
             fg_color=("#2a2d2e", "#1f2223"),
             corner_radius=12,
         )
+        if not self.dnd_enabled:
+            self.drop_zone.configure(text="Click to browse .pdb/.top/.gro files\n(drag-and-drop unavailable)")
         self.drop_zone.pack(fill="x", pady=(0, 12))
         self.drop_zone.bind("<Button-1>", lambda _e: self._browse_upload_files())
         if self.dnd_enabled:
