@@ -31,7 +31,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --noconfirm --windowed --name md-simulation-gui main.py
+          pyinstaller --noconfirm --windowed --name md-simulation-gui --collect-all tkinterdnd2 main.py
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
