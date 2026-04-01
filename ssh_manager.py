@@ -36,7 +36,8 @@ class SSHManager:
     def connect(self) -> None:
         try:
             client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.load_system_host_keys()
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
             connect_kwargs = {
                 "hostname": self.config.host,
                 "port": self.config.port,
@@ -51,6 +52,11 @@ class SSHManager:
             client.connect(**connect_kwargs)
             self.client = client
         except Exception as exc:
+            details = str(exc)
+            if "not found in known_hosts" in details or "Server's host key could not be verified" in details:
+                raise SSHManagerError(
+                    "Host key verification failed. Add the server key to known_hosts and try again."
+                ) from exc
             raise SSHManagerError(
                 "Connection failed. Please check host, port, username, and credentials."
             ) from exc
