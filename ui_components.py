@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
 import threading
 import traceback
 
@@ -18,6 +19,9 @@ from ssh_manager import SSHConfig, SSHManager, SSHManagerError
 SERVICE_NAME = "md_simulation_gui"
 PROGRESS_START = 0.1
 PROGRESS_UPLOAD_RANGE = 0.4
+DEFAULT_PROTOCOL_REPO = "https://github.com/jalalkhanutmanzai/gromacs-md-protocol.git"
+DEFAULT_PROTOCOL_BRANCH = "master"
+DEFAULT_PROTOCOL_COMMAND = "bash scripts/run_complete_workflow.sh"
 
 
 @dataclass
@@ -113,13 +117,13 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
 
         self.drop_zone = ctk.CTkLabel(
             wrapper,
-            text="Drag and drop .pdb/.top/.gro files here\n(or click to browse)",
+            text="Drag and drop protocol input files here\n(.pdb .top .gro .itp .prm .env)",
             height=140,
             fg_color=("#2a2d2e", "#1f2223"),
             corner_radius=12,
         )
         if not self.dnd_enabled:
-            self.drop_zone.configure(text="Click to browse .pdb/.top/.gro files\n(drag-and-drop unavailable)")
+            self.drop_zone.configure(text="Click to browse protocol input files\n(drag-and-drop unavailable)")
         self.drop_zone.pack(fill="x", pady=(0, 12))
         self.drop_zone.bind("<Button-1>", lambda _e: self._browse_upload_files())
         if self.dnd_enabled:
@@ -159,6 +163,21 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         ctk.CTkLabel(frame, text="Generated Parameters").grid(row=3, column=0, sticky="nw", padx=8, pady=8)
         self.params_text = ctk.CTkTextbox(frame, height=180)
         self.params_text.grid(row=3, column=1, columnspan=2, sticky="ew", padx=8, pady=8)
+
+        ctk.CTkLabel(frame, text="Protocol Repo URL").grid(row=4, column=0, sticky="w", padx=8, pady=8)
+        self.protocol_repo_entry = ctk.CTkEntry(frame, width=420)
+        self.protocol_repo_entry.grid(row=4, column=1, columnspan=2, sticky="ew", padx=8, pady=8)
+        self.protocol_repo_entry.insert(0, DEFAULT_PROTOCOL_REPO)
+
+        ctk.CTkLabel(frame, text="Protocol Branch").grid(row=5, column=0, sticky="w", padx=8, pady=8)
+        self.protocol_branch_entry = ctk.CTkEntry(frame, width=420)
+        self.protocol_branch_entry.grid(row=5, column=1, columnspan=2, sticky="ew", padx=8, pady=8)
+        self.protocol_branch_entry.insert(0, DEFAULT_PROTOCOL_BRANCH)
+
+        ctk.CTkLabel(frame, text="Protocol Run Command").grid(row=6, column=0, sticky="w", padx=8, pady=8)
+        self.protocol_command_entry = ctk.CTkEntry(frame, width=420)
+        self.protocol_command_entry.grid(row=6, column=1, columnspan=2, sticky="ew", padx=8, pady=8)
+        self.protocol_command_entry.insert(0, DEFAULT_PROTOCOL_COMMAND)
         frame.grid_columnconfigure(1, weight=1)
         self._apply_smart_default(self.defaults_var.get())
 
@@ -282,11 +301,11 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         self._add_upload_paths(paths)
 
     def _browse_upload_files(self):
-        paths = filedialog.askopenfilenames(filetypes=[("MD files", "*.pdb *.top *.gro")])
+        paths = filedialog.askopenfilenames(filetypes=[("MD files", "*.pdb *.top *.gro *.itp *.prm *.env")])
         self._add_upload_paths(paths)
 
     def _add_upload_paths(self, paths):
-        allowed = {".pdb", ".top", ".gro"}
+        allowed = {".pdb", ".top", ".gro", ".itp", ".prm", ".env"}
         for path in paths:
             suffix = Path(path).suffix.lower()
             if suffix in allowed and path not in self.app_state.uploaded_files:
@@ -316,18 +335,33 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
 
     def _build_remote_command(self) -> str:
         engine = self.engine_var.get()
-        params = self.params_text.get("1.0", "end").strip().replace("\n", " ; ")
         length_ns = int(self.length_slider.get())
 
         if engine == "GROMACS":
+            repo_url = self.protocol_repo_entry.get().strip() or DEFAULT_PROTOCOL_REPO
+            branch = self.protocol_branch_entry.get().strip() or DEFAULT_PROTOCOL_BRANCH
+            run_command = self.protocol_command_entry.get().strip() or DEFAULT_PROTOCOL_COMMAND
+            disallowed_tokens = [";", "&", "|", "`", "$", "<", ">", "\n", "\r"]
+            if any(token in run_command for token in disallowed_tokens):
+                raise ValueError("Protocol Run Command contains unsupported shell characters.")
+            remote_workdir = self.remote_dir_entry.get().strip() or "~/md_jobs"
+            placement_commands = self._build_protocol_input_placement_commands(remote_workdir)
             return (
-                "echo 'Running GROMACS workflow' ; "
-                f"echo 'Length: {length_ns} ns' ; "
-                f"echo '{params}' ; "
-                "sleep 1 ; echo 'Generating RMSD output' ; "
-                "printf '# time rmsd\\n0 0.0\\n10 0.12\\n20 0.18\\n30 0.22\\n' > ~/md_jobs/rmsd.xvg ; "
-                "echo 'Completed'"
+                "set -euo pipefail ; "
+                f"mkdir -p {shlex.quote(remote_workdir)} ; "
+                f"cd {shlex.quote(remote_workdir)} ; "
+                f"if [ -d gromacs-md-protocol/.git ]; then "
+                f"cd gromacs-md-protocol && git fetch origin && git checkout {shlex.quote(branch)} "
+                f"&& git pull --ff-only origin {shlex.quote(branch)} && cd .. ; "
+                f"else git clone --branch {shlex.quote(branch)} --single-branch {shlex.quote(repo_url)} gromacs-md-protocol ; fi ; "
+                "cd gromacs-md-protocol ; "
+                "mkdir -p input/charmm_ligand ; "
+                "if [ ! -f config/config.env ] && [ -f config/config.env.example ]; then cp config/config.env.example config/config.env ; fi ; "
+                f"{placement_commands}"
+                f"echo 'Simulation length hint from GUI: {length_ns} ns' ; "
+                f"{run_command}"
             )
+        params = self.params_text.get("1.0", "end").strip().replace("\n", " ; ")
         return (
             "echo 'Running AutoDock workflow' ; "
             f"echo 'Length: {length_ns} ns (dock pseudo-scale)' ; "
@@ -336,6 +370,32 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
             "printf '# time score\\n0 -7.1\\n1 -7.4\\n2 -7.5\\n3 -7.6\\n' > ~/md_jobs/docking.xvg ; "
             "echo 'Completed'"
         )
+
+    def _build_protocol_input_placement_commands(self, remote_workdir: str) -> str:
+        commands: list[str] = []
+        uploaded_names = [Path(path).name for path in self.app_state.uploaded_files]
+        remote_root = Path(remote_workdir)
+
+        if "config.env" in uploaded_names:
+            commands.append(
+                f"cp -f {shlex.quote(str(remote_root / 'config.env'))} config/config.env ; "
+            )
+        if "protein_clean.pdb" in uploaded_names:
+            commands.append(
+                f"cp -f {shlex.quote(str(remote_root / 'protein_clean.pdb'))} input/protein_clean.pdb ; "
+            )
+        if "lig_ini.pdb" in uploaded_names:
+            commands.append(
+                f"cp -f {shlex.quote(str(remote_root / 'lig_ini.pdb'))} input/charmm_ligand/lig_ini.pdb ; "
+            )
+        for suffix, target_name in ((".itp", "lig.itp"), (".prm", "lig.prm")):
+            source_name = next((name for name in uploaded_names if name.lower().endswith(suffix)), None)
+            if source_name:
+                commands.append(
+                    f"cp -f {shlex.quote(str(remote_root / source_name))} input/charmm_ligand/{target_name} ; "
+                )
+
+        return "".join(commands)
 
     def on_run_simulation(self):
         self.run_btn.configure(state="disabled")
@@ -402,6 +462,24 @@ class MainWindow(TkinterDnD.DnDWrapper, ctk.CTk):
         output_dir = str(Path.home() / "md_simulation_results")
         try:
             files = manager.download_matching_files(output_dir, extensions=[".xvg", ".log", ".xtc"])
+            if self.engine_var.get() == "GROMACS":
+                files.extend(
+                    manager.download_matching_files(
+                        output_dir,
+                        extensions=[".xvg", ".log", ".xtc", ".edr", ".gro", ".cpt", ".tpr"],
+                        remote_dir=f"{manager.config.remote_workdir}/gromacs-md-protocol/results",
+                        recursive=True,
+                    )
+                )
+                files.extend(
+                    manager.download_matching_files(
+                        output_dir,
+                        extensions=[".xvg", ".log", ".xtc", ".edr", ".gro", ".cpt", ".tpr"],
+                        remote_dir=f"{manager.config.remote_workdir}/gromacs-md-protocol/work",
+                        recursive=True,
+                    )
+                )
+                files = list(dict.fromkeys(files))
             self.app_state.downloaded_files = files
             self.results_list.configure(state="normal")
             self.results_list.delete("1.0", "end")
